@@ -1,0 +1,3 @@
+# Python dependencies for ACS data collection
+pandas>=1.3.0
+requests>=2.26.0
