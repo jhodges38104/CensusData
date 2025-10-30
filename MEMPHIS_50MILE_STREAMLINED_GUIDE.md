@@ -452,11 +452,28 @@ if 'EJSCREEN' in uploaded_files:
     else:
         # Find GEOID column (EJScreen uses 'ID' as the block group GEOID)
         if 'ID' in ej_data.columns:
-            ej_data['GEOID'] = ej_data['ID'].astype(str).str.zfill(12)
+            # Fix scientific notation issue (common with Census GEOIDs in CSV)
+            # Convert from scientific notation to proper integers, then to strings
+            def fix_geoid(geoid_str):
+                try:
+                    # Handle scientific notation (e.g., '1.0001E+11')
+                    if 'E' in str(geoid_str).upper() or 'e' in str(geoid_str):
+                        # Convert to float, then to int, then to string
+                        return str(int(float(geoid_str)))
+                    else:
+                        # Already a regular number string
+                        return str(geoid_str).replace('.0', '').strip()
+                except:
+                    return str(geoid_str).strip()
+
+            ej_data['GEOID'] = ej_data['ID'].apply(fix_geoid).str.zfill(12)
+            print(f"  ✓ Fixed scientific notation in GEOIDs")
 
         # Filter to Memphis states
         ej_data['state_fips'] = ej_data['GEOID'].str[:2]
         ej_memphis = ej_data[ej_data['state_fips'].isin(['47', '05', '28'])].copy()
+
+        print(f"  ✓ Found {len(ej_memphis):,} block groups in TN, AR, MS")
 
         # Select key EJScreen variables
         # Environmental indicators (P_ = percentile, national)
