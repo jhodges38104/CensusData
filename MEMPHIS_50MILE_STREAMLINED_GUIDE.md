@@ -1356,3 +1356,95 @@ print("=" * 70)
 
 This is the **standard approach** for neighborhood health research and is appropriate for analysis. Just note in your methods that some variables are tract-level.
 
+---
+
+## 📚 DATA CITATIONS
+
+### American Community Survey (ACS) Data
+
+All Census demographic variables (used for ICE calculations and ADI components) are from:
+
+**U.S. Census Bureau (2021).** *American Community Survey 5-Year Estimates, 2017-2021.* Retrieved from https://www.census.gov/programs-surveys/acs
+
+**Specific tables used:**
+- **B03002**: Hispanic or Latino Origin by Race
+- **B19001**: Household Income in the Past 12 Months
+- **B19001H**: Household Income (White Alone, Not Hispanic or Latino)
+- **B19001B**: Household Income (Black or African American Alone)
+- **B25003**: Tenure (Owner/Renter Occupied)
+- **B25003H**: Tenure (White Alone, Not Hispanic or Latino Householder)
+- **B25003B**: Tenure (Black or African American Alone Householder)
+- **B17001**: Poverty Status in the Past 12 Months
+- **B19113**: Median Family Income in the Past 12 Months
+- **B25077**: Median Value (Dollars)
+- **B25064**: Median Gross Rent (Dollars)
+- **B15002**: Sex by Educational Attainment for the Population 25 Years and Over
+- **B23025**: Employment Status for the Population 16 Years and Over
+- **B25044**: Tenure by Vehicles Available
+- **B25014**: Tenure by Occupants Per Room
+- **B25043**: Tenure by Telephone Service Available
+- **B11001**: Household Type
+
+**API Access:**
+```
+https://api.census.gov/data/2021/acs/acs5
+```
+
+**Note on 5-Year Estimates:** The 2021 ACS 5-year estimates represent data collected over the period 2017-2021. These multi-year estimates provide more reliable data for small geographies like census block groups, where single-year estimates may not be available or may have large margins of error.
+
+### Area Deprivation Index (ADI)
+
+**Neighborhood Atlas® (2023).** *Area Deprivation Index v4.0.* University of Wisconsin School of Medicine and Public Health. Retrieved from https://www.neighborhoodatlas.medicine.wisc.edu/
+
+**Citation format:**
+> University of Wisconsin School of Medicine and Public Health (2023). 2023 Area Deprivation Index v4.0. Downloaded from https://www.neighborhoodatlas.medicine.wisc.edu/
+
+**Original ADI methodology:**
+> Singh, G.K. (2003). Area deprivation and widening inequalities in US mortality, 1969-1998. *American Journal of Public Health, 93*(7), 1137-1143. https://doi.org/10.2105/AJPH.93.7.1137
+
+### Social Vulnerability Index (SVI)
+
+**Centers for Disease Control and Prevention/Agency for Toxic Substances and Disease Registry (2020).** *CDC/ATSDR Social Vulnerability Index [2020 Database].* Retrieved from https://www.atsdr.cdc.gov/placeandhealth/svi/
+
+**Citation format:**
+> Centers for Disease Control and Prevention/ Agency for Toxic Substances and Disease Registry/ Geospatial Research, Analysis, and Services Program. CDC/ATSDR Social Vulnerability Index 2020 Database Tennessee, Arkansas, Mississippi. https://www.atsdr.cdc.gov/placeandhealth/svi/data_documentation_download.html. Accessed [DATE].
+
+### Index of Concentration at the Extremes (ICE)
+
+The ICE measures were calculated using ACS 2017-2021 data following the methodology described in:
+
+> Krieger, N., Waterman, P.D., Chen, J.T., Soobader, M.J., Subramanian, S.V., & Carson, R. (2002). Zip code caveat: Bias due to spatiotemporal mismatches between zip codes and US census-defined geographic areas—the Public Health Disparities Geocoding Project. *American Journal of Public Health, 92*(7), 1100-1102. https://doi.org/10.2105/AJPH.92.7.1100
+
+> Massey, D.S. (2001). The prodigal paradigm returns: Ecology comes back to sociology. In A. Booth & A.C. Crouter (Eds.), *Does it take a village? Community effects on children, adolescents, and families* (pp. 41-48). Lawrence Erlbaum Associates.
+
+### Child Opportunity Index (COI)
+
+**Acevedo-Garcia, D., Noelke, C., McArdle, N., et al. (2020).** *Child Opportunity Index 2.0 Database.* diversitydatakids.org. Brandeis University, The Heller School for Social Policy and Management. Retrieved from https://www.diversitydatakids.org/child-opportunity-index
+
+### USDA Food Access Research Atlas
+
+**U.S. Department of Agriculture, Economic Research Service (2019).** *Food Access Research Atlas.* Retrieved from https://www.ers.usda.gov/data-products/food-access-research-atlas/
+
+**Citation format:**
+> U.S. Department of Agriculture, Economic Research Service. Food Access Research Atlas. https://www.ers.usda.gov/data-products/food-access-research-atlas/. Accessed [DATE].
+
+### EPA Environmental Justice Screen (EJScreen)
+
+**U.S. Environmental Protection Agency (EPA). (2023).** *EJScreen: Environmental Justice Screening and Mapping Tool.* Retrieved from https://www.epa.gov/ejscreen
+
+---
+
+## 📝 METHODS STATEMENT TEMPLATE
+
+When writing your methods section, you can adapt this text:
+
+> **Data Sources:** Census demographic data were obtained from the U.S. Census Bureau's American Community Survey (ACS) 5-year estimates for 2017-2021 at the census block group level via the Census API. We collected data for all block groups within a 50-mile radius of Memphis, TN (35.1495°N, 90.0490°W), encompassing portions of Tennessee, Arkansas, and Mississippi.
+>
+> **Neighborhood Indices:** We incorporated multiple neighborhood-level social determinants of health (SDOH) indices. The Area Deprivation Index (ADI) v4.0 was obtained from the University of Wisconsin Neighborhood Atlas®. The CDC/ATSDR Social Vulnerability Index (SVI) 2020 was downloaded from the CDC's Geospatial Research, Analysis, and Services Program. The Child Opportunity Index (COI) 2.0 was obtained from diversitydatakids.org. Food access metrics were derived from the USDA Food Access Research Atlas (2019).
+>
+> **Index Calculations:** We calculated five Index of Concentration at the Extremes (ICE) measures following established methods (Krieger et al., 2002; Massey, 2001) using ACS 2017-2021 data: ICE for race (White Non-Hispanic vs. Black), income (high vs. low), race-income (White Non-Hispanic high-income vs. Black low-income), tenure (owner vs. renter), and race-tenure (White owner vs. Black renter).
+>
+> **Geographic Considerations:** While census block groups served as our primary unit of analysis (N = [YOUR N]), some indices (SVI, COI, Food Access) are natively available only at the census tract level. Following standard practice in neighborhood health research, tract-level values were assigned to all block groups within each tract. Statistical analyses accounted for this spatial clustering using [YOUR STATISTICAL APPROACH, e.g., multilevel models, cluster-robust standard errors].
+
+---
+
