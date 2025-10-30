@@ -536,6 +536,111 @@ print("\n✓ All indices merged successfully!")
 
 ---
 
+### **Cell 5.5: Diagnose EJScreen Merge Issues (OPTIONAL - Only if merge was low)**
+
+```python
+print("=" * 70)
+print("EJSCREEN MERGE DIAGNOSTICS")
+print("=" * 70)
+
+if 'EJSCREEN' in uploaded_files:
+    print("\n🔍 Checking why EJScreen merge was low...")
+
+    # Reload EJScreen to inspect
+    ej_data = None
+    for encoding in ['latin-1', 'ISO-8859-1', 'cp1252', 'utf-8']:
+        try:
+            ej_data = pd.read_csv(uploaded_files['EJSCREEN'], dtype={'ID': str},
+                                  encoding=encoding, low_memory=False)
+            break
+        except:
+            continue
+
+    if ej_data is not None:
+        print(f"\n1️⃣ EJScreen file shape: {ej_data.shape}")
+        print(f"   Columns: {len(ej_data.columns)}")
+        print(f"   Rows: {len(ej_data):,}")
+
+        # Check ID column
+        if 'ID' in ej_data.columns:
+            print(f"\n2️⃣ EJScreen 'ID' column:")
+            print(f"   Sample IDs (first 5):")
+            for i, id_val in enumerate(ej_data['ID'].head(5), 1):
+                print(f"      {i}. '{id_val}' (length: {len(str(id_val))})")
+
+            # Check for Memphis states
+            ej_data['GEOID_clean'] = ej_data['ID'].astype(str).str.zfill(12)
+            ej_data['state_fips'] = ej_data['GEOID_clean'].str[:2]
+
+            print(f"\n3️⃣ State distribution in EJScreen:")
+            state_counts = ej_data['state_fips'].value_counts().head(10)
+            for state, count in state_counts.items():
+                state_name = {'47': 'TN', '05': 'AR', '28': 'MS'}.get(state, f'State {state}')
+                print(f"      {state_name} ({state}): {count:,} block groups")
+
+            # Filter to Memphis states
+            ej_memphis = ej_data[ej_data['state_fips'].isin(['47', '05', '28'])].copy()
+            print(f"\n4️⃣ Memphis states (TN, AR, MS):")
+            print(f"   Block groups: {len(ej_memphis):,}")
+
+            # Check matching with final_data
+            print(f"\n5️⃣ Matching with your Memphis dataset:")
+            print(f"   Your dataset GEOIDs: {final_data['GEOID'].nunique():,}")
+            print(f"   EJScreen GEOIDs (Memphis): {ej_memphis['GEOID_clean'].nunique():,}")
+
+            # Find matches
+            matches = set(final_data['GEOID'].astype(str)) & set(ej_memphis['GEOID_clean'].astype(str))
+            print(f"   ✓ Matching GEOIDs: {len(matches):,}")
+            print(f"   Match rate: {len(matches) / final_data['GEOID'].nunique() * 100:.1f}%")
+
+            # Show non-matches
+            your_geoids = set(final_data['GEOID'].astype(str).head(10))
+            ej_geoids = set(ej_memphis['GEOID_clean'].astype(str).head(10))
+
+            print(f"\n6️⃣ Sample GEOIDs comparison:")
+            print(f"   Your data (first 5):")
+            for i, geoid in enumerate(list(your_geoids)[:5], 1):
+                in_ej = "✓" if geoid in ej_geoids or geoid in set(ej_memphis['GEOID_clean'].astype(str)) else "✗"
+                print(f"      {i}. {geoid} {in_ej}")
+
+            print(f"\n   EJScreen data (first 5):")
+            for i, geoid in enumerate(list(ej_geoids)[:5], 1):
+                in_yours = "✓" if geoid in your_geoids or geoid in set(final_data['GEOID'].astype(str)) else "✗"
+                print(f"      {i}. {geoid} {in_yours}")
+
+            # Check if there are any non-matching patterns
+            print(f"\n7️⃣ Potential issues:")
+
+            # Check for leading/trailing spaces
+            has_spaces = ej_data['ID'].astype(str).str.strip() != ej_data['ID'].astype(str)
+            if has_spaces.any():
+                print(f"   ⚠ Found {has_spaces.sum()} IDs with leading/trailing spaces")
+
+            # Check for non-numeric characters
+            has_nonnumeric = ~ej_data['ID'].astype(str).str.replace('.', '', regex=False).str.isnumeric()
+            if has_nonnumeric.any():
+                print(f"   ⚠ Found {has_nonnumeric.sum()} IDs with non-numeric characters")
+                print(f"      Examples: {ej_data[has_nonnumeric]['ID'].head(3).tolist()}")
+
+            # Check length distribution
+            id_lengths = ej_data['ID'].astype(str).str.len().value_counts().sort_index()
+            if len(id_lengths) > 1:
+                print(f"   ℹ️  ID length distribution:")
+                for length, count in id_lengths.head(5).items():
+                    print(f"      {length} digits: {count:,} IDs")
+        else:
+            print("   ⚠ No 'ID' column found in EJScreen file")
+            print(f"   Available columns: {list(ej_data.columns[:20])}")
+    else:
+        print("   ⚠ Could not load EJScreen file")
+else:
+    print("No EJScreen file uploaded")
+
+print("\n" + "=" * 70)
+```
+
+---
+
 ### **Cell 6: Data Summary & Crosswalk Check**
 
 ```python
