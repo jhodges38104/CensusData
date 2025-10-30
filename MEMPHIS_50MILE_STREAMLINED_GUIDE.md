@@ -435,63 +435,76 @@ if 'FOOD' in uploaded_files:
 if 'EJSCREEN' in uploaded_files:
     print("\n--- Merging EJScreen (Block Group Level) ---")
 
-    ej_data = pd.read_csv(uploaded_files['EJSCREEN'], dtype={'ID': str}, low_memory=False)
+    # Try different encodings (EJScreen files often use Latin-1 or Windows-1252)
+    ej_data = None
+    for encoding in ['latin-1', 'ISO-8859-1', 'cp1252', 'utf-8']:
+        try:
+            ej_data = pd.read_csv(uploaded_files['EJSCREEN'], dtype={'ID': str},
+                                  encoding=encoding, low_memory=False)
+            print(f"  ✓ File loaded successfully with {encoding} encoding")
+            break
+        except UnicodeDecodeError:
+            continue
 
-    # Find GEOID column (EJScreen uses 'ID' as the block group GEOID)
-    if 'ID' in ej_data.columns:
-        ej_data['GEOID'] = ej_data['ID'].astype(str).str.zfill(12)
+    if ej_data is None:
+        print("  ⚠ Could not read EJScreen file with any common encoding")
+        print("  Skipping EJScreen merge...")
+    else:
+        # Find GEOID column (EJScreen uses 'ID' as the block group GEOID)
+        if 'ID' in ej_data.columns:
+            ej_data['GEOID'] = ej_data['ID'].astype(str).str.zfill(12)
 
-    # Filter to Memphis states
-    ej_data['state_fips'] = ej_data['GEOID'].str[:2]
-    ej_memphis = ej_data[ej_data['state_fips'].isin(['47', '05', '28'])].copy()
+        # Filter to Memphis states
+        ej_data['state_fips'] = ej_data['GEOID'].str[:2]
+        ej_memphis = ej_data[ej_data['state_fips'].isin(['47', '05', '28'])].copy()
 
-    # Select key EJScreen variables
-    # Environmental indicators (P_ = percentile, national)
-    ej_cols = ['GEOID',
-               'P_PM25', 'P_OZONE', 'P_DSLPM',  # Air quality
-               'P_CANCER', 'P_RESP', 'P_PTRAF', 'P_LDPNT', 'P_PNPL',  # Toxic exposure
-               'P_PRMP', 'P_PWDIS',  # Water quality
-               'P_PTSDF', 'P_UST',  # Waste sites
-               'P_MINORPCT', 'P_LOWINCPCT', 'P_LESSHSPCT', 'P_LINGISOPCT', 'P_UNDER5PCT', 'P_OVER64PCT',  # Demographics
-               'P_DEMOGIDX_2', 'P_DEMOGIDX_5',  # Demographic index
-               'P_VULEOPCT']  # Vulnerable populations
+        # Select key EJScreen variables
+        # Environmental indicators (P_ = percentile, national)
+        ej_cols = ['GEOID',
+                   'P_PM25', 'P_OZONE', 'P_DSLPM',  # Air quality
+                   'P_CANCER', 'P_RESP', 'P_PTRAF', 'P_LDPNT', 'P_PNPL',  # Toxic exposure
+                   'P_PRMP', 'P_PWDIS',  # Water quality
+                   'P_PTSDF', 'P_UST',  # Waste sites
+                   'P_MINORPCT', 'P_LOWINCPCT', 'P_LESSHSPCT', 'P_LINGISOPCT', 'P_UNDER5PCT', 'P_OVER64PCT',  # Demographics
+                   'P_DEMOGIDX_2', 'P_DEMOGIDX_5',  # Demographic index
+                   'P_VULEOPCT']  # Vulnerable populations
 
-    available_ej = [c for c in ej_cols if c in ej_memphis.columns]
+        available_ej = [c for c in ej_cols if c in ej_memphis.columns]
 
-    # Merge on GEOID (block group to block group)
-    final_data = final_data.merge(
-        ej_memphis[available_ej],
-        on='GEOID',
-        how='left'
-    )
+        # Merge on GEOID (block group to block group)
+        final_data = final_data.merge(
+            ej_memphis[available_ej],
+            on='GEOID',
+            how='left'
+        )
 
-    # Rename to more readable names
-    rename_map = {
-        'P_PM25': 'EJ_PM25_Pctl',
-        'P_OZONE': 'EJ_Ozone_Pctl',
-        'P_DSLPM': 'EJ_DieselPM_Pctl',
-        'P_CANCER': 'EJ_Cancer_Pctl',
-        'P_RESP': 'EJ_Respiratory_Pctl',
-        'P_PTRAF': 'EJ_Traffic_Pctl',
-        'P_LDPNT': 'EJ_LeadPaint_Pctl',
-        'P_PNPL': 'EJ_Superfund_Pctl',
-        'P_PRMP': 'EJ_RMP_Pctl',
-        'P_PWDIS': 'EJ_WasteWater_Pctl',
-        'P_PTSDF': 'EJ_HazWaste_Pctl',
-        'P_UST': 'EJ_UndergroundTanks_Pctl',
-        'P_MINORPCT': 'EJ_MinorityPct_Pctl',
-        'P_LOWINCPCT': 'EJ_LowIncomePct_Pctl',
-        'P_DEMOGIDX_2': 'EJ_DemoIndex2_Pctl',
-        'P_DEMOGIDX_5': 'EJ_DemoIndex5_Pctl',
-        'P_VULEOPCT': 'EJ_VulnerablePct_Pctl'
-    }
+        # Rename to more readable names
+        rename_map = {
+            'P_PM25': 'EJ_PM25_Pctl',
+            'P_OZONE': 'EJ_Ozone_Pctl',
+            'P_DSLPM': 'EJ_DieselPM_Pctl',
+            'P_CANCER': 'EJ_Cancer_Pctl',
+            'P_RESP': 'EJ_Respiratory_Pctl',
+            'P_PTRAF': 'EJ_Traffic_Pctl',
+            'P_LDPNT': 'EJ_LeadPaint_Pctl',
+            'P_PNPL': 'EJ_Superfund_Pctl',
+            'P_PRMP': 'EJ_RMP_Pctl',
+            'P_PWDIS': 'EJ_WasteWater_Pctl',
+            'P_PTSDF': 'EJ_HazWaste_Pctl',
+            'P_UST': 'EJ_UndergroundTanks_Pctl',
+            'P_MINORPCT': 'EJ_MinorityPct_Pctl',
+            'P_LOWINCPCT': 'EJ_LowIncomePct_Pctl',
+            'P_DEMOGIDX_2': 'EJ_DemoIndex2_Pctl',
+            'P_DEMOGIDX_5': 'EJ_DemoIndex5_Pctl',
+            'P_VULEOPCT': 'EJ_VulnerablePct_Pctl'
+        }
 
-    for old_col, new_col in rename_map.items():
-        if old_col in final_data.columns:
-            final_data.rename(columns={old_col: new_col}, inplace=True)
+        for old_col, new_col in rename_map.items():
+            if old_col in final_data.columns:
+                final_data.rename(columns={old_col: new_col}, inplace=True)
 
-    ej_count = final_data['EJ_PM25_Pctl'].notna().sum() if 'EJ_PM25_Pctl' in final_data.columns else 0
-    print(f"✓ EJScreen merged: {ej_count:,} / {len(final_data):,} ({ej_count/len(final_data)*100:.1f}%)")
+        ej_count = final_data['EJ_PM25_Pctl'].notna().sum() if 'EJ_PM25_Pctl' in final_data.columns else 0
+        print(f"  ✓ EJScreen merged: {ej_count:,} / {len(final_data):,} ({ej_count/len(final_data)*100:.1f}%)")
 
 # ============================================================
 # SUMMARY
