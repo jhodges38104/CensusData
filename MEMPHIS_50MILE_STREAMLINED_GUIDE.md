@@ -1004,86 +1004,171 @@ for census_var, readable_name in adi_components.items():
             missing_vars.append((census_var, readable_name))
 
 print(f"\n✓ Found {len(available_vars)} variables already in dataset")
-print(f"⚠ Missing {len(missing_vars)} variables")
+print(f"⚠  Missing {len(missing_vars)} variables (need to collect from Census API)")
+
+if available_vars:
+    print("\n📋 Already available:")
+    for i, (census_var, readable_name, _) in enumerate(available_vars[:5], 1):
+        print(f"   {i}. {readable_name} ({census_var})")
+    if len(available_vars) > 5:
+        print(f"   ... and {len(available_vars) - 5} more")
+
+if missing_vars:
+    print("\n📋 Need to collect:")
+    for i, (census_var, readable_name) in enumerate(missing_vars[:5], 1):
+        print(f"   {i}. {readable_name} ({census_var})")
+    if len(missing_vars) > 5:
+        print(f"   ... and {len(missing_vars) - 5} more")
 
 # Step 2: If missing variables, try to collect them from Census API
 if missing_vars:
-    print(f"\n📥 Attempting to collect {len(missing_vars)} missing variables from Census API...")
+    print(f"\n{'='*70}")
+    print(f"COLLECTING {len(missing_vars)} MISSING VARIABLES FROM CENSUS API")
+    print(f"{'='*70}")
 
     try:
         import requests
         import os
+        import time
 
         api_key = os.environ.get('CENSUS_API_KEY', '4d5e7ded000067ff443e2f90683ce53bcf660392')
 
-        # Collect missing variables by state
-        new_data_dict = {}
+        # Split variables into smaller batches (Census API can be finicky with too many vars)
+        batch_size = 25
+        missing_var_batches = [missing_vars[i:i + batch_size]
+                               for i in range(0, len(missing_vars), batch_size)]
+
+        print(f"\n📦 Splitting into {len(missing_var_batches)} batches of up to {batch_size} variables")
+
+        # Collect by state
+        all_state_data = {}
 
         for state_fips, state_abbr in {'47': 'TN', '05': 'AR', '28': 'MS'}.items():
-            print(f"\n  Collecting from {state_abbr}...")
+            print(f"\n{'─'*70}")
+            print(f"📍 {state_abbr} (state FIPS: {state_fips})")
+            print(f"{'─'*70}")
 
-            # Build variable list
-            var_list = ','.join([var for var, _ in missing_vars])
+            state_dfs = []
 
-            # API call
-            url = f"https://api.census.gov/data/2021/acs/acs5"
-            params = {
-                'get': f"NAME,{var_list}",
-                'for': 'block group:*',
-                'in': f'state:{state_fips}',
-                'key': api_key
-            }
+            for batch_idx, var_batch in enumerate(missing_var_batches, 1):
+                print(f"\n  Batch {batch_idx}/{len(missing_var_batches)} ({len(var_batch)} variables)...")
 
-            response = requests.get(url, params=params, timeout=60)
+                # Build variable list
+                var_list = ','.join([var for var, _ in var_batch])
 
-            if response.status_code == 200:
-                data = response.json()
-                headers = data[0]
-                rows = data[1:]
+                # API call
+                url = f"https://api.census.gov/data/2021/acs/acs5"
+                params = {
+                    'get': var_list,
+                    'for': 'block group:*',
+                    'in': f'state:{state_fips} county:* tract:*',
+                    'key': api_key
+                }
 
-                # Convert to DataFrame
-                df = pd.DataFrame(rows, columns=headers)
+                try:
+                    response = requests.get(url, params=params, timeout=120)
 
-                # Create GEOID
-                df['GEOID'] = df['state'] + df['county'] + df['tract'] + df['block group']
-                df['GEOID'] = df['GEOID'].astype(str).str.zfill(12)
+                    if response.status_code == 200:
+                        data = response.json()
 
-                # Store by state
-                new_data_dict[state_fips] = df
-                print(f"    ✓ Collected {len(df)} block groups")
-            else:
-                print(f"    ⚠ Failed: {response.status_code}")
+                        if len(data) > 1:  # Has data rows beyond header
+                            headers = data[0]
+                            rows = data[1:]
 
-        # Combine new data
-        if new_data_dict:
-            new_data_combined = pd.concat(new_data_dict.values(), ignore_index=True)
+                            # Convert to DataFrame
+                            df = pd.DataFrame(rows, columns=headers)
+
+                            # Create GEOID
+                            df['GEOID'] = (df['state'] + df['county'] +
+                                          df['tract'] + df['block group'])
+                            df['GEOID'] = df['GEOID'].astype(str).str.zfill(12)
+
+                            # Rename variables to readable names
+                            rename_map = {var: name for var, name in var_batch}
+                            df.rename(columns=rename_map, inplace=True)
+
+                            state_dfs.append(df)
+                            print(f"    ✓ Collected {len(df)} block groups")
+                        else:
+                            print(f"    ⚠ No data returned")
+
+                    else:
+                        print(f"    ⚠ HTTP {response.status_code}: {response.text[:200]}")
+
+                    # Be nice to the API
+                    time.sleep(0.5)
+
+                except Exception as e:
+                    print(f"    ⚠ Error: {e}")
+                    continue
+
+            # Merge batches for this state
+            if state_dfs:
+                # Start with first batch
+                state_combined = state_dfs[0]
+
+                # Merge additional batches
+                for df in state_dfs[1:]:
+                    state_combined = state_combined.merge(df, on='GEOID', how='outer',
+                                                          suffixes=('', '_dup'))
+                    # Drop duplicate geographic columns
+                    dup_cols = [c for c in state_combined.columns if c.endswith('_dup')]
+                    state_combined.drop(columns=dup_cols, inplace=True)
+
+                all_state_data[state_fips] = state_combined
+                print(f"\n  ✓ {state_abbr} complete: {len(state_combined)} block groups with {len(state_combined.columns)-5} variables")
+
+        # Combine all states
+        if all_state_data:
+            print(f"\n{'='*70}")
+            print("MERGING NEW DATA INTO DATASET")
+            print(f"{'='*70}")
+
+            new_data_combined = pd.concat(all_state_data.values(), ignore_index=True)
+            print(f"\n✓ Combined data: {len(new_data_combined)} block groups")
+
+            # Get list of new variable columns (exclude geographic columns)
+            geo_cols = ['GEOID', 'state', 'county', 'tract', 'block group']
+            new_var_cols = [c for c in new_data_combined.columns if c not in geo_cols]
+
+            print(f"✓ New variables: {len(new_var_cols)}")
 
             # Merge with final_data
-            # Select only GEOID and the missing variables
-            merge_cols = ['GEOID'] + [var for var, _ in missing_vars]
-            merge_cols = [c for c in merge_cols if c in new_data_combined.columns]
+            merge_cols = ['GEOID'] + new_var_cols
+            before_cols = len(final_data.columns)
 
             final_data = final_data.merge(
                 new_data_combined[merge_cols],
                 on='GEOID',
-                how='left'
+                how='left',
+                suffixes=('', '_new')
             )
 
-            # Update available_vars
-            for var, name in missing_vars:
-                if var in final_data.columns:
-                    available_vars.append((var, name, var))
+            after_cols = len(final_data.columns)
+            print(f"✓ Merged into final_data: {before_cols} → {after_cols} columns (+{after_cols-before_cols})")
 
-            print(f"\n✓ Successfully collected and merged {len(missing_vars)} variables")
+            # Update available_vars with newly collected variables
+            for var, name in missing_vars:
+                if name in final_data.columns:
+                    available_vars.append((var, name, name))
+
+            print(f"\n✅ SUCCESS: Collected {len(new_var_cols)} variables from Census API!")
         else:
-            print("\n⚠ Could not collect missing variables")
+            print(f"\n⚠ WARNING: Could not collect any missing variables from Census API")
+            print("   Continuing with only the variables already in dataset...")
 
     except Exception as e:
-        print(f"\n⚠ Error collecting variables: {e}")
+        print(f"\n⚠ ERROR collecting variables: {e}")
         print("   Continuing with available variables only...")
+        import traceback
+        print(f"\nFull error:\n{traceback.format_exc()}")
 
 # Step 3: Create ADI components dataset
-print(f"\n📊 Creating ADI components dataset with {len(available_vars)} variables...")
+print(f"\n{'='*70}")
+print(f"CREATING ADI COMPONENTS DATASET")
+print(f"{'='*70}")
+
+print(f"\n📊 Using {len(available_vars)} variables...")
 
 # Extract variables into new dataframe
 adi_extract = final_data[['GEOID', 'tract_geoid', 'state_abbr',
