@@ -16,10 +16,10 @@ This guide provides a simplified workflow to collect all major Social Determinan
 |-------|------------------|-----------------|------------------|
 | **ADI** (Area Deprivation) | Block Group ✓ | Direct match - most granular | Direct merge to block groups |
 | **ICE** (Segregation) | Block Group ✓ | Calculated from ACS | Calculated at block group level |
+| **EPA EJScreen** | Block Group ✓ | Direct match - most granular | Direct merge to block groups |
 | **SVI** (Social Vulnerability) | Census Tract | Slightly larger than block group | Assigned to all block groups within tract |
 | **COI** (Child Opportunity) | Census Tract | Slightly larger than block group | Assigned to all block groups within tract |
 | **Food Access** | Census Tract | Slightly larger than block group | Assigned to all block groups within tract |
-| **EPA EJScreen** | Census Tract | Slightly larger than block group | Assigned to all block groups within tract |
 | **Walkability (SLD)** | Block Group ✓ | Direct match - most granular | Direct merge to block groups |
 | **Eviction Lab** | Census Tract | Slightly larger than block group | Assigned to all block groups within tract |
 
@@ -215,7 +215,7 @@ for state in ['TN', 'AR', 'MS']:
 
 ---
 
-### **Cell 4: Upload and Merge All Manual Files**
+### **Cell 4: Upload All Manual Files**
 
 ```python
 print("=" * 70)
@@ -230,6 +230,7 @@ uploaded_files = {}
 print("\n📤 Upload your files one at a time:")
 print("\nFile 1: ADI (Area Deprivation Index)")
 print("  Expected: US_2023_ADI_Census_Block_Group_v4_0_1.csv")
+print("  Download: https://www.neighborhoodatlas.medicine.wisc.edu/")
 uploaded_adi = files.upload()
 if uploaded_adi:
     uploaded_files['ADI'] = list(uploaded_adi.keys())[0]
@@ -237,6 +238,7 @@ if uploaded_adi:
 
 print("\nFile 2: COI (Childhood Opportunity Index)")
 print("  Expected: COI_database.csv (from diversitydatakids.org)")
+print("  Download: https://www.diversitydatakids.org/child-opportunity-index")
 uploaded_coi = files.upload()
 if uploaded_coi:
     uploaded_files['COI'] = list(uploaded_coi.keys())[0]
@@ -244,10 +246,19 @@ if uploaded_coi:
 
 print("\nFile 3: Food Access")
 print("  Expected: FoodAccessResearchAtlasData2019.xlsx (from USDA)")
+print("  Download: https://www.ers.usda.gov/data-products/food-access-research-atlas/")
 uploaded_food = files.upload()
 if uploaded_food:
     uploaded_files['FOOD'] = list(uploaded_food.keys())[0]
     print(f"  ✓ {uploaded_files['FOOD']}")
+
+print("\nFile 4: EJScreen (Environmental Justice)")
+print("  Expected: EJSCREEN_2023_BG_StatePct_with_AS_CNMI_GU_VI.csv")
+print("  Download: https://www.epa.gov/ejscreen/download-ejscreen-data")
+uploaded_ej = files.upload()
+if uploaded_ej:
+    uploaded_files['EJSCREEN'] = list(uploaded_ej.keys())[0]
+    print(f"  ✓ {uploaded_files['EJSCREEN']}")
 
 print("\n✓ Files uploaded!")
 print(f"Total files: {len(uploaded_files)}")
@@ -419,6 +430,70 @@ if 'FOOD' in uploaded_files:
     print(f"  Note: Census tract data assigned to all block groups within each tract")
 
 # ============================================================
+# 5. MERGE EJSCREEN (BLOCK GROUP LEVEL)
+# ============================================================
+if 'EJSCREEN' in uploaded_files:
+    print("\n--- Merging EJScreen (Block Group Level) ---")
+
+    ej_data = pd.read_csv(uploaded_files['EJSCREEN'], dtype={'ID': str}, low_memory=False)
+
+    # Find GEOID column (EJScreen uses 'ID' as the block group GEOID)
+    if 'ID' in ej_data.columns:
+        ej_data['GEOID'] = ej_data['ID'].astype(str).str.zfill(12)
+
+    # Filter to Memphis states
+    ej_data['state_fips'] = ej_data['GEOID'].str[:2]
+    ej_memphis = ej_data[ej_data['state_fips'].isin(['47', '05', '28'])].copy()
+
+    # Select key EJScreen variables
+    # Environmental indicators (P_ = percentile, national)
+    ej_cols = ['GEOID',
+               'P_PM25', 'P_OZONE', 'P_DSLPM',  # Air quality
+               'P_CANCER', 'P_RESP', 'P_PTRAF', 'P_LDPNT', 'P_PNPL',  # Toxic exposure
+               'P_PRMP', 'P_PWDIS',  # Water quality
+               'P_PTSDF', 'P_UST',  # Waste sites
+               'P_MINORPCT', 'P_LOWINCPCT', 'P_LESSHSPCT', 'P_LINGISOPCT', 'P_UNDER5PCT', 'P_OVER64PCT',  # Demographics
+               'P_DEMOGIDX_2', 'P_DEMOGIDX_5',  # Demographic index
+               'P_VULEOPCT']  # Vulnerable populations
+
+    available_ej = [c for c in ej_cols if c in ej_memphis.columns]
+
+    # Merge on GEOID (block group to block group)
+    final_data = final_data.merge(
+        ej_memphis[available_ej],
+        on='GEOID',
+        how='left'
+    )
+
+    # Rename to more readable names
+    rename_map = {
+        'P_PM25': 'EJ_PM25_Pctl',
+        'P_OZONE': 'EJ_Ozone_Pctl',
+        'P_DSLPM': 'EJ_DieselPM_Pctl',
+        'P_CANCER': 'EJ_Cancer_Pctl',
+        'P_RESP': 'EJ_Respiratory_Pctl',
+        'P_PTRAF': 'EJ_Traffic_Pctl',
+        'P_LDPNT': 'EJ_LeadPaint_Pctl',
+        'P_PNPL': 'EJ_Superfund_Pctl',
+        'P_PRMP': 'EJ_RMP_Pctl',
+        'P_PWDIS': 'EJ_WasteWater_Pctl',
+        'P_PTSDF': 'EJ_HazWaste_Pctl',
+        'P_UST': 'EJ_UndergroundTanks_Pctl',
+        'P_MINORPCT': 'EJ_MinorityPct_Pctl',
+        'P_LOWINCPCT': 'EJ_LowIncomePct_Pctl',
+        'P_DEMOGIDX_2': 'EJ_DemoIndex2_Pctl',
+        'P_DEMOGIDX_5': 'EJ_DemoIndex5_Pctl',
+        'P_VULEOPCT': 'EJ_VulnerablePct_Pctl'
+    }
+
+    for old_col, new_col in rename_map.items():
+        if old_col in final_data.columns:
+            final_data.rename(columns={old_col: new_col}, inplace=True)
+
+    ej_count = final_data['EJ_PM25_Pctl'].notna().sum() if 'EJ_PM25_Pctl' in final_data.columns else 0
+    print(f"✓ EJScreen merged: {ej_count:,} / {len(final_data):,} ({ej_count/len(final_data)*100:.1f}%)")
+
+# ============================================================
 # SUMMARY
 # ============================================================
 print("\n" + "=" * 70)
@@ -433,7 +508,8 @@ indices = {
     'SVI (Vulnerability)': 'RPL_THEMES',
     'COI (Opportunity)': key_coi[0] if 'COI' in uploaded_files and key_coi else None,
     'ICE (Segregation)': 'ICE_race',
-    'Food Access': 'LILATracts_1And10'
+    'Food Access': 'LILATracts_1And10',
+    'EJScreen (Environment)': 'EJ_PM25_Pctl'
 }
 
 for name, col in indices.items():
@@ -473,6 +549,7 @@ print("\n🔷 BLOCK GROUP LEVEL (most granular):")
 bg_indices = {
     'ADI': 'ADI_NATRANK',
     'ICE (all 5 measures)': 'ICE_race',
+    'EJScreen': 'EJ_PM25_Pctl',
     'Census demographics': 'total_pop_race_eth'
 }
 
@@ -560,6 +637,7 @@ print("   • state_abbr - TN, AR, or MS")
 print("\n✓ BLOCK GROUP LEVEL INDICES:")
 print("   • ADI (Area Deprivation Index) - National & state ranks")
 print("   • ICE (Index of Concentration) - 5 segregation measures")
+print("   • EJScreen (Environmental Justice) - Air quality, toxics, demographics")
 print("   • All Census demographics - Race, income, housing")
 
 print("\n✓ CENSUS TRACT LEVEL INDICES:")
@@ -1332,6 +1410,7 @@ print("=" * 70)
 |-------|-----------|-----------|---------------------|
 | **ADI** | Block Group | 2 | `ADI_NATRANK`, `ADI_STATERNK` |
 | **ICE** | Block Group | 5 | `ICE_race`, `ICE_income`, `ICE_race_income`, etc. |
+| **EJScreen** | Block Group | 20+ | `EJ_PM25_Pctl`, `EJ_Cancer_Pctl`, `EJ_Traffic_Pctl`, etc. |
 | **SVI** | Census Tract | 6 | `RPL_THEMES`, `RPL_THEME1`, `RPL_THEME2`, etc. |
 | **COI** | Census Tract | 5+ | `z_COI`, domain scores |
 | **Food** | Census Tract | 5+ | `LILATracts_1And10`, `TractSNAP` |
@@ -1344,6 +1423,7 @@ print("=" * 70)
 | SVI | 0-1 | Less vulnerable | More vulnerable |
 | COI | 1-100 | Less opportunity | More opportunity |
 | ICE | -1 to +1 | More disadvantaged | More privileged |
+| EJScreen | 0-100 | Lower environmental burden | Higher environmental burden |
 
 ---
 
@@ -1351,7 +1431,7 @@ print("=" * 70)
 
 **You'll have ONE dataset** with ~800-1,200 block groups, where:
 - Each row = one block group
-- Block group variables (ADI, ICE) vary by row
+- Block group variables (ADI, ICE, EJScreen) vary by row
 - Tract variables (SVI, COI, Food) are the same for all block groups within the same tract
 
 This is the **standard approach** for neighborhood health research and is appropriate for analysis. Just note in your methods that some variables are tract-level.
