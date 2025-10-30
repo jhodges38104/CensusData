@@ -590,6 +590,655 @@ print("=" * 70)
 
 ---
 
+### **Cell 7.5: Clean Non-Numeric Index Values**
+
+```python
+print("=" * 70)
+print("CLEANING NON-NUMERIC VALUES")
+print("=" * 70)
+
+# Get all index columns (exclude geographic and demographic)
+exclude_prefixes = ['GEOID', 'tract_geoid', 'state', 'latitude', 'longitude',
+                    'distance', 'total_', 'white_', 'black_', 'hispanic_',
+                    'all_', 'owner_', 'renter_']
+
+index_cols = [col for col in final_data.columns
+              if not any(col.startswith(prefix) for prefix in exclude_prefixes)]
+
+# Also specifically include known index columns
+index_patterns = ['ADI', 'SVI', 'RPL', 'ICE', 'COI', 'z_', 'LILA', 'Tract', 'LA']
+index_cols.extend([col for col in final_data.columns
+                   if any(pattern in col for pattern in index_patterns)])
+index_cols = list(set(index_cols))  # Remove duplicates
+
+print(f"\n🔍 Found {len(index_cols)} index columns to clean")
+
+# Track changes
+changes_summary = []
+
+for col in index_cols:
+    if col not in final_data.columns:
+        continue
+
+    # Count non-numeric before
+    non_numeric_before = 0
+    try:
+        converted = pd.to_numeric(final_data[col], errors='coerce')
+        non_numeric_before = (final_data[col].notna() & converted.isna()).sum()
+    except:
+        continue
+
+    if non_numeric_before > 0:
+        # Convert to numeric (non-numeric becomes NaN)
+        final_data[col] = pd.to_numeric(final_data[col], errors='coerce')
+        changes_summary.append((col, non_numeric_before))
+        print(f"  ✓ {col}: {non_numeric_before} non-numeric → NA")
+
+# Special value handling
+print("\n🔧 Handling special values:")
+
+# Values that should be NA
+special_values = {
+    'ADI_NATRANK': (1, 100),
+    'ADI_STATERNK': (1, 10),
+    'RPL_THEMES': (0, 1),
+    'RPL_THEME1': (0, 1),
+    'RPL_THEME2': (0, 1),
+    'RPL_THEME3': (0, 1),
+    'RPL_THEME4': (0, 1)
+}
+
+for col, (min_val, max_val) in special_values.items():
+    if col in final_data.columns:
+        # Values outside valid range → NA
+        out_of_range = ((final_data[col] < min_val) | (final_data[col] > max_val)) & final_data[col].notna()
+        if out_of_range.sum() > 0:
+            final_data.loc[out_of_range, col] = np.nan
+            print(f"  ✓ {col}: {out_of_range.sum()} values outside [{min_val}, {max_val}] → NA")
+
+# Summary
+print("\n" + "=" * 70)
+print("CLEANING COMPLETE")
+print("=" * 70)
+
+if changes_summary:
+    print(f"\nCleaned {len(changes_summary)} columns:")
+    for col, count in changes_summary[:10]:  # Show first 10
+        print(f"  • {col}: {count} values")
+    if len(changes_summary) > 10:
+        print(f"  ... and {len(changes_summary) - 10} more")
+else:
+    print("\n✓ All index columns already clean!")
+
+print("\n✓ Data ready for analysis!")
+```
+
+---
+
+### **Cell 8: Comprehensive Visualizations & Correlations**
+
+```python
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+print("=" * 70)
+print("VISUALIZATIONS & CORRELATION ANALYSIS")
+print("=" * 70)
+
+# Select key indices for visualization
+viz_indices = {
+    'ADI_NATRANK': 'ADI (Deprivation)',
+    'RPL_THEMES': 'SVI (Vulnerability)',
+    'ICE_race': 'ICE Race',
+    'ICE_income': 'ICE Income',
+    'ICE_race_income': 'ICE Race+Income'
+}
+
+# Add COI if available
+coi_col = [c for c in final_data.columns if 'z_COI' in c or 'COI' in c]
+if coi_col:
+    viz_indices[coi_col[0]] = 'COI (Opportunity)'
+
+# Add Food Access if available
+if 'LILATracts_1And10' in final_data.columns:
+    viz_indices['LILATracts_1And10'] = 'Food Desert'
+
+# Filter to available columns
+available_indices = {k: v for k, v in viz_indices.items() if k in final_data.columns}
+
+print(f"\n📊 Analyzing {len(available_indices)} indices")
+
+# ============================================================
+# 1. CORRELATION MATRIX
+# ============================================================
+print("\n--- Calculating Correlations ---")
+
+corr_data = final_data[list(available_indices.keys())].copy()
+correlation_matrix = corr_data.corr()
+
+# Save correlation matrix
+correlation_matrix.to_csv('memphis_indices_correlation_matrix.csv')
+print("✓ Saved: memphis_indices_correlation_matrix.csv")
+
+# Visualize correlation matrix
+fig, ax = plt.subplots(figsize=(10, 8))
+sns.heatmap(correlation_matrix, annot=True, fmt='.2f', cmap='coolwarm',
+            center=0, vmin=-1, vmax=1, square=True, ax=ax,
+            xticklabels=[available_indices[k] for k in correlation_matrix.columns],
+            yticklabels=[available_indices[k] for k in correlation_matrix.index])
+ax.set_title('Correlation Matrix: SDOH Indices\nMemphis 50-Mile Radius', fontsize=14, pad=20)
+plt.tight_layout()
+plt.savefig('correlation_matrix.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+print("\n✓ Key Correlations:")
+# Show strongest correlations
+for i, col1 in enumerate(correlation_matrix.columns):
+    for col2 in correlation_matrix.columns[i+1:]:
+        r = correlation_matrix.loc[col1, col2]
+        if abs(r) > 0.5:  # Strong correlation
+            print(f"  {available_indices[col1]:25} ↔ {available_indices[col2]:25} r = {r:.3f}")
+
+# ============================================================
+# 2. KEY SCATTER PLOTS
+# ============================================================
+print("\n--- Creating Scatter Plots ---")
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+# Plot 1: ADI vs SVI
+if 'ADI_NATRANK' in corr_data.columns and 'RPL_THEMES' in corr_data.columns:
+    plot_data = corr_data[['ADI_NATRANK', 'RPL_THEMES']].dropna()
+    if len(plot_data) > 0:
+        axes[0].scatter(plot_data['ADI_NATRANK'], plot_data['RPL_THEMES'],
+                       alpha=0.5, s=20)
+        axes[0].set_xlabel('ADI (Higher = More Deprived)')
+        axes[0].set_ylabel('SVI (Higher = More Vulnerable)')
+        axes[0].set_title('ADI vs SVI')
+        r = plot_data.corr().iloc[0, 1]
+        axes[0].text(0.05, 0.95, f'r = {r:.3f}', transform=axes[0].transAxes,
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[0].grid(True, alpha=0.3)
+
+# Plot 2: ADI vs ICE
+if 'ADI_NATRANK' in corr_data.columns and 'ICE_race_income' in corr_data.columns:
+    plot_data = corr_data[['ADI_NATRANK', 'ICE_race_income']].dropna()
+    if len(plot_data) > 0:
+        axes[1].scatter(plot_data['ADI_NATRANK'], plot_data['ICE_race_income'],
+                       alpha=0.5, s=20, color='orange')
+        axes[1].set_xlabel('ADI (Higher = More Deprived)')
+        axes[1].set_ylabel('ICE Race+Income (Higher = More Privileged)')
+        axes[1].set_title('ADI vs ICE Race+Income')
+        r = plot_data.corr().iloc[0, 1]
+        axes[1].text(0.05, 0.95, f'r = {r:.3f}', transform=axes[1].transAxes,
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[1].grid(True, alpha=0.3)
+
+# Plot 3: SVI vs COI (if available)
+if 'RPL_THEMES' in corr_data.columns and coi_col:
+    plot_data = corr_data[['RPL_THEMES', coi_col[0]]].dropna()
+    if len(plot_data) > 0:
+        axes[2].scatter(plot_data['RPL_THEMES'], plot_data[coi_col[0]],
+                       alpha=0.5, s=20, color='green')
+        axes[2].set_xlabel('SVI (Higher = More Vulnerable)')
+        axes[2].set_ylabel('COI (Higher = More Opportunity)')
+        axes[2].set_title('SVI vs COI')
+        r = plot_data.corr().iloc[0, 1]
+        axes[2].text(0.05, 0.95, f'r = {r:.3f}', transform=axes[2].transAxes,
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[2].grid(True, alpha=0.3)
+else:
+    axes[2].text(0.5, 0.5, 'COI not available', ha='center', va='center',
+                transform=axes[2].transAxes)
+    axes[2].set_title('SVI vs COI')
+
+plt.tight_layout()
+plt.savefig('scatter_plots.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# ============================================================
+# 3. DISTRIBUTION COMPARISONS
+# ============================================================
+print("\n--- Creating Distribution Plots ---")
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+# Standardize all to 0-100 scale for comparison
+standardized = {}
+for col in available_indices.keys():
+    data = final_data[col].dropna()
+    if len(data) > 0:
+        # Standardize to 0-100
+        if 'ICE' in col:  # ICE is -1 to +1, reverse so high = disadvantage
+            standardized[col] = (1 - data) / 2 * 100
+        elif 'RPL' in col:  # SVI is 0-1
+            standardized[col] = data * 100
+        else:  # ADI, COI already 0-100ish
+            standardized[col] = data
+
+# Plot 1: Overlaid histograms
+for col, label in list(available_indices.items())[:4]:
+    if col in standardized:
+        axes[0, 0].hist(standardized[col], bins=30, alpha=0.5, label=label)
+axes[0, 0].set_xlabel('Standardized Score (0-100)')
+axes[0, 0].set_ylabel('Frequency')
+axes[0, 0].set_title('Distribution Comparison (All Standardized 0-100)')
+axes[0, 0].legend()
+
+# Plot 2: Box plots
+box_data = [standardized[col] for col in available_indices.keys() if col in standardized]
+box_labels = [available_indices[col] for col in available_indices.keys() if col in standardized]
+axes[0, 1].boxplot(box_data, labels=box_labels)
+axes[0, 1].set_ylabel('Standardized Score (0-100)')
+axes[0, 1].set_title('Distribution by Index')
+axes[0, 1].tick_params(axis='x', rotation=45)
+
+# Plot 3: Data completeness
+completeness = {}
+for col, label in available_indices.items():
+    pct = final_data[col].notna().sum() / len(final_data) * 100
+    completeness[label] = pct
+
+axes[1, 0].barh(list(completeness.keys()), list(completeness.values()))
+axes[1, 0].set_xlabel('Data Completeness (%)')
+axes[1, 0].set_title('Index Data Availability')
+axes[1, 0].set_xlim(0, 100)
+
+# Plot 4: Geographic pattern
+if 'distance_from_memphis_miles' in final_data.columns and 'ADI_NATRANK' in final_data.columns:
+    plot_data = final_data[['distance_from_memphis_miles', 'ADI_NATRANK']].dropna()
+    axes[1, 1].scatter(plot_data['distance_from_memphis_miles'],
+                      plot_data['ADI_NATRANK'], alpha=0.3, s=10)
+    axes[1, 1].set_xlabel('Distance from Memphis (miles)')
+    axes[1, 1].set_ylabel('ADI (Deprivation)')
+    axes[1, 1].set_title('ADI by Distance from Memphis')
+    axes[1, 1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('distribution_plots.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+print("\n" + "=" * 70)
+print("VISUALIZATION COMPLETE")
+print("=" * 70)
+print("\n✓ Saved files:")
+print("  • correlation_matrix.png")
+print("  • scatter_plots.png")
+print("  • distribution_plots.png")
+print("  • memphis_indices_correlation_matrix.csv")
+```
+
+---
+
+### **Cell 9: Export Summary Statistics**
+
+```python
+print("=" * 70)
+print("EXPORTING SUMMARY STATISTICS")
+print("=" * 70)
+
+# Create summary statistics for all indices
+summary_stats = pd.DataFrame()
+
+for col, label in available_indices.items():
+    data = final_data[col].dropna()
+    if len(data) > 0:
+        stats = {
+            'Index': label,
+            'Variable': col,
+            'Count': len(data),
+            'Mean': data.mean(),
+            'Median': data.median(),
+            'Std': data.std(),
+            'Min': data.min(),
+            'Max': data.max(),
+            'Q25': data.quantile(0.25),
+            'Q75': data.quantile(0.75),
+            'Missing_N': final_data[col].isna().sum(),
+            'Missing_Pct': final_data[col].isna().sum() / len(final_data) * 100
+        }
+        summary_stats = pd.concat([summary_stats, pd.DataFrame([stats])], ignore_index=True)
+
+# Save summary
+summary_stats.to_csv('memphis_indices_summary_statistics.csv', index=False)
+
+print("\n✓ Saved: memphis_indices_summary_statistics.csv")
+print("\n📊 Summary Statistics:")
+print(summary_stats.to_string(index=False))
+
+# Download all analysis files
+print("\n" + "=" * 70)
+print("DOWNLOADING ANALYSIS FILES")
+print("=" * 70)
+
+from google.colab import files
+
+analysis_files = [
+    'correlation_matrix.png',
+    'scatter_plots.png',
+    'distribution_plots.png',
+    'memphis_indices_correlation_matrix.csv',
+    'memphis_indices_summary_statistics.csv'
+]
+
+for file in analysis_files:
+    try:
+        files.download(file)
+        print(f"✓ Downloaded: {file}")
+    except:
+        print(f"⚠ Could not download: {file}")
+
+print("\n✓ Analysis complete!")
+```
+
+---
+
+### **Cell 10: Extract ADI Component Variables**
+
+```python
+print("=" * 70)
+print("EXTRACTING ADI COMPONENT VARIABLES")
+print("=" * 70)
+
+print("\nℹ️  ADI (Area Deprivation Index) is composed of 17 Census variables")
+print("   across 4 domains: Income, Education, Employment, Housing Quality")
+
+# Define the 17 ADI component variables from Singh (2003)
+adi_components = {
+    # INCOME DOMAIN (5 variables)
+    'B17001_002E': 'pop_below_poverty',
+    'B17001_001E': 'pop_poverty_determined',
+    'B19113_001E': 'median_family_income',
+    'B25077_001E': 'median_home_value',
+    'B25064_001E': 'median_gross_rent',
+
+    # EDUCATION DOMAIN (2 variables)
+    'B15002_003E': 'male_less_than_9th',
+    'B15002_004E': 'male_9th_to_12th_no_diploma',
+    'B15002_020E': 'female_less_than_9th',
+    'B15002_021E': 'female_9th_to_12th_no_diploma',
+    'B15002_001E': 'total_pop_education',
+
+    # EMPLOYMENT DOMAIN (2 variables)
+    'B23025_005E': 'unemployed',
+    'B23025_003E': 'in_labor_force',
+
+    # HOUSING QUALITY DOMAIN (8 variables)
+    'B25044_003E': 'owner_no_vehicle',
+    'B25044_010E': 'renter_no_vehicle',
+    'B25044_001E': 'total_tenure_vehicle',
+    'B25014_005E': 'owner_1.01_to_1.50_per_room',
+    'B25014_006E': 'owner_1.51_to_2.00_per_room',
+    'B25014_007E': 'owner_2.01_or_more_per_room',
+    'B25014_011E': 'renter_1.01_to_1.50_per_room',
+    'B25014_012E': 'renter_1.51_to_2.00_per_room',
+    'B25014_013E': 'renter_2.01_or_more_per_room',
+    'B25014_001E': 'total_occupancy_per_room',
+    'B25043_007E': 'owner_no_telephone',
+    'B25043_014E': 'renter_no_telephone',
+    'B25043_001E': 'total_telephone',
+    'B25003_003E': 'renter_occupied',
+    'B25003_001E': 'total_housing_units',
+    'B11001_002E': 'family_households',
+    'B11001_001E': 'total_households'
+}
+
+print(f"\n🔍 Checking for ADI components in dataset...")
+
+# Step 1: Check which variables already exist
+available_vars = []
+missing_vars = []
+
+for census_var, readable_name in adi_components.items():
+    # Check if variable exists in dataset (with or without suffix)
+    if census_var in final_data.columns:
+        available_vars.append((census_var, readable_name, census_var))
+    elif readable_name in final_data.columns:
+        available_vars.append((census_var, readable_name, readable_name))
+    else:
+        # Check if census variable without 'E' suffix exists
+        var_no_suffix = census_var.replace('E', '')
+        if var_no_suffix in final_data.columns:
+            available_vars.append((census_var, readable_name, var_no_suffix))
+        else:
+            missing_vars.append((census_var, readable_name))
+
+print(f"\n✓ Found {len(available_vars)} variables already in dataset")
+print(f"⚠ Missing {len(missing_vars)} variables")
+
+# Step 2: If missing variables, try to collect them from Census API
+if missing_vars:
+    print(f"\n📥 Attempting to collect {len(missing_vars)} missing variables from Census API...")
+
+    try:
+        import requests
+        import os
+
+        api_key = os.environ.get('CENSUS_API_KEY', '4d5e7ded000067ff443e2f90683ce53bcf660392')
+
+        # Collect missing variables by state
+        new_data_dict = {}
+
+        for state_fips, state_abbr in {'47': 'TN', '05': 'AR', '28': 'MS'}.items():
+            print(f"\n  Collecting from {state_abbr}...")
+
+            # Build variable list
+            var_list = ','.join([var for var, _ in missing_vars])
+
+            # API call
+            url = f"https://api.census.gov/data/2021/acs/acs5"
+            params = {
+                'get': f"NAME,{var_list}",
+                'for': 'block group:*',
+                'in': f'state:{state_fips}',
+                'key': api_key
+            }
+
+            response = requests.get(url, params=params, timeout=60)
+
+            if response.status_code == 200:
+                data = response.json()
+                headers = data[0]
+                rows = data[1:]
+
+                # Convert to DataFrame
+                df = pd.DataFrame(rows, columns=headers)
+
+                # Create GEOID
+                df['GEOID'] = df['state'] + df['county'] + df['tract'] + df['block group']
+                df['GEOID'] = df['GEOID'].astype(str).str.zfill(12)
+
+                # Store by state
+                new_data_dict[state_fips] = df
+                print(f"    ✓ Collected {len(df)} block groups")
+            else:
+                print(f"    ⚠ Failed: {response.status_code}")
+
+        # Combine new data
+        if new_data_dict:
+            new_data_combined = pd.concat(new_data_dict.values(), ignore_index=True)
+
+            # Merge with final_data
+            # Select only GEOID and the missing variables
+            merge_cols = ['GEOID'] + [var for var, _ in missing_vars]
+            merge_cols = [c for c in merge_cols if c in new_data_combined.columns]
+
+            final_data = final_data.merge(
+                new_data_combined[merge_cols],
+                on='GEOID',
+                how='left'
+            )
+
+            # Update available_vars
+            for var, name in missing_vars:
+                if var in final_data.columns:
+                    available_vars.append((var, name, var))
+
+            print(f"\n✓ Successfully collected and merged {len(missing_vars)} variables")
+        else:
+            print("\n⚠ Could not collect missing variables")
+
+    except Exception as e:
+        print(f"\n⚠ Error collecting variables: {e}")
+        print("   Continuing with available variables only...")
+
+# Step 3: Create ADI components dataset
+print(f"\n📊 Creating ADI components dataset with {len(available_vars)} variables...")
+
+# Extract variables into new dataframe
+adi_extract = final_data[['GEOID', 'tract_geoid', 'state_abbr',
+                           'latitude', 'longitude', 'distance_from_memphis_miles']].copy()
+
+# Add raw variables
+for census_var, readable_name, actual_col in available_vars:
+    adi_extract[readable_name] = pd.to_numeric(final_data[actual_col], errors='coerce')
+
+# Step 4: Calculate ADI component percentages
+print("\n🧮 Calculating ADI component percentages...")
+
+# Calculate percentage indicators used in ADI
+try:
+    # 1. Poverty rate
+    if 'pop_below_poverty' in adi_extract.columns and 'pop_poverty_determined' in adi_extract.columns:
+        adi_extract['pct_below_poverty'] = (
+            adi_extract['pop_below_poverty'] / adi_extract['pop_poverty_determined'] * 100
+        )
+
+    # 2. Less than high school education
+    if all(col in adi_extract.columns for col in ['male_less_than_9th', 'male_9th_to_12th_no_diploma',
+                                                    'female_less_than_9th', 'female_9th_to_12th_no_diploma',
+                                                    'total_pop_education']):
+        adi_extract['pct_no_hs_diploma'] = (
+            (adi_extract['male_less_than_9th'] + adi_extract['male_9th_to_12th_no_diploma'] +
+             adi_extract['female_less_than_9th'] + adi_extract['female_9th_to_12th_no_diploma']) /
+            adi_extract['total_pop_education'] * 100
+        )
+
+    # 3. Unemployment rate
+    if 'unemployed' in adi_extract.columns and 'in_labor_force' in adi_extract.columns:
+        adi_extract['pct_unemployed'] = (
+            adi_extract['unemployed'] / adi_extract['in_labor_force'] * 100
+        )
+
+    # 4. No vehicle
+    if all(col in adi_extract.columns for col in ['owner_no_vehicle', 'renter_no_vehicle', 'total_tenure_vehicle']):
+        adi_extract['pct_no_vehicle'] = (
+            (adi_extract['owner_no_vehicle'] + adi_extract['renter_no_vehicle']) /
+            adi_extract['total_tenure_vehicle'] * 100
+        )
+
+    # 5. Crowded housing (>1 person per room)
+    crowding_cols = ['owner_1.01_to_1.50_per_room', 'owner_1.51_to_2.00_per_room', 'owner_2.01_or_more_per_room',
+                     'renter_1.01_to_1.50_per_room', 'renter_1.51_to_2.00_per_room', 'renter_2.01_or_more_per_room']
+    if all(col in adi_extract.columns for col in crowding_cols + ['total_occupancy_per_room']):
+        adi_extract['pct_crowded'] = (
+            sum(adi_extract[col] for col in crowding_cols) / adi_extract['total_occupancy_per_room'] * 100
+        )
+
+    # 6. No telephone
+    if all(col in adi_extract.columns for col in ['owner_no_telephone', 'renter_no_telephone', 'total_telephone']):
+        adi_extract['pct_no_telephone'] = (
+            (adi_extract['owner_no_telephone'] + adi_extract['renter_no_telephone']) /
+            adi_extract['total_telephone'] * 100
+        )
+
+    # 7. Renter occupied
+    if 'renter_occupied' in adi_extract.columns and 'total_housing_units' in adi_extract.columns:
+        adi_extract['pct_renter'] = (
+            adi_extract['renter_occupied'] / adi_extract['total_housing_units'] * 100
+        )
+
+    # 8. Single parent households
+    if 'family_households' in adi_extract.columns and 'total_households' in adi_extract.columns:
+        adi_extract['pct_family_households'] = (
+            adi_extract['family_households'] / adi_extract['total_households'] * 100
+        )
+
+    print("✓ Calculated percentage indicators")
+
+except Exception as e:
+    print(f"⚠ Some percentage calculations failed: {e}")
+
+# Step 5: Save to CSV
+filename = f'memphis_{RADIUS_MILES}mile_adi_components.csv'
+adi_extract.to_csv(filename, index=False)
+
+print("\n" + "=" * 70)
+print("ADI COMPONENTS EXTRACTION COMPLETE")
+print("=" * 70)
+
+print(f"\n📁 Filename: {filename}")
+print(f"📊 Total rows: {len(adi_extract):,} block groups")
+print(f"📊 Total columns: {len(adi_extract.columns)}")
+
+print("\n✓ Contents:")
+print(f"  • {len(available_vars)} raw Census variables")
+print(f"  • {len([c for c in adi_extract.columns if c.startswith('pct_')])} calculated percentages")
+print("  • Geographic identifiers (GEOID, state, distance)")
+
+print("\n📋 Sample data:")
+display_cols = ['GEOID', 'state_abbr', 'distance_from_memphis_miles']
+if 'pct_below_poverty' in adi_extract.columns:
+    display_cols.append('pct_below_poverty')
+if 'pct_unemployed' in adi_extract.columns:
+    display_cols.append('pct_unemployed')
+if 'median_family_income' in adi_extract.columns:
+    display_cols.append('median_family_income')
+
+print(adi_extract[display_cols].head(10).to_string(index=False))
+
+# Create data dictionary
+print("\n📖 Creating data dictionary...")
+
+data_dict = []
+for census_var, readable_name, _ in available_vars:
+    data_dict.append({
+        'Variable': readable_name,
+        'Census_Code': census_var,
+        'Domain': 'Income' if 'income' in readable_name or 'poverty' in readable_name or 'value' in readable_name or 'rent' in readable_name
+                  else 'Education' if 'education' in readable_name or '9th' in readable_name or '12th' in readable_name
+                  else 'Employment' if 'employed' in readable_name or 'labor' in readable_name
+                  else 'Housing' if 'vehicle' in readable_name or 'room' in readable_name or 'telephone' in readable_name or 'renter' in readable_name or 'household' in readable_name
+                  else 'Other',
+        'Description': readable_name.replace('_', ' ').title()
+    })
+
+# Add percentage variables
+pct_vars = [c for c in adi_extract.columns if c.startswith('pct_')]
+for var in pct_vars:
+    data_dict.append({
+        'Variable': var,
+        'Census_Code': 'Calculated',
+        'Domain': 'Percentage Indicator',
+        'Description': var.replace('_', ' ').title()
+    })
+
+data_dict_df = pd.DataFrame(data_dict)
+data_dict_filename = f'memphis_{RADIUS_MILES}mile_adi_components_dictionary.csv'
+data_dict_df.to_csv(data_dict_filename, index=False)
+
+print(f"✓ Saved: {data_dict_filename}")
+
+# Download files
+print("\n" + "=" * 70)
+print("DOWNLOADING")
+print("=" * 70)
+
+from google.colab import files
+
+files.download(filename)
+files.download(data_dict_filename)
+
+print("\n✓ Download complete!")
+print("\n🎉 You now have all ADI component variables!")
+print(f"   • {len(available_vars)} Census variables")
+print("   • Calculated percentage indicators")
+print("   • Data dictionary for reference")
+print("=" * 70)
+```
+
+---
+
 ## 📋 QUICK REFERENCE TABLES
 
 ### Index Availability
