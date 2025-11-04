@@ -435,13 +435,32 @@ if 'FOOD' in uploaded_files:
 if 'EJSCREEN' in uploaded_files:
     print("\n--- Merging EJScreen (Block Group Level) ---")
 
+    # Fix scientific notation issue - MUST use converters, not dtype
+    def fix_geoid(geoid_str):
+        """Convert scientific notation to proper GEOID string"""
+        try:
+            if pd.isna(geoid_str) or geoid_str == '':
+                return ''
+            # Handle scientific notation (e.g., '1.0001E+11')
+            if 'E' in str(geoid_str).upper() or 'e' in str(geoid_str):
+                # Convert to float, then to int, then to string
+                return str(int(float(geoid_str))).zfill(12)
+            else:
+                # Already a regular number string
+                return str(geoid_str).replace('.0', '').strip().zfill(12)
+        except:
+            return str(geoid_str).strip().zfill(12)
+
     # Try different encodings (EJScreen files often use Latin-1 or Windows-1252)
     ej_data = None
     for encoding in ['latin-1', 'ISO-8859-1', 'cp1252', 'utf-8']:
         try:
-            ej_data = pd.read_csv(uploaded_files['EJSCREEN'], dtype={'ID': str},
-                                  encoding=encoding, low_memory=False)
-            print(f"  ✓ File loaded successfully with {encoding} encoding")
+            # Use converters to fix scientific notation DURING read
+            ej_data = pd.read_csv(uploaded_files['EJSCREEN'],
+                                  converters={'ID': fix_geoid},
+                                  encoding=encoding,
+                                  low_memory=False)
+            print(f"  ✓ File loaded with {encoding} encoding")
             break
         except UnicodeDecodeError:
             continue
@@ -450,78 +469,72 @@ if 'EJSCREEN' in uploaded_files:
         print("  ⚠ Could not read EJScreen file with any common encoding")
         print("  Skipping EJScreen merge...")
     else:
-        # Find GEOID column (EJScreen uses 'ID' as the block group GEOID)
+        # Rename ID to GEOID (already fixed by converter)
         if 'ID' in ej_data.columns:
-            # Fix scientific notation issue (common with Census GEOIDs in CSV)
-            # Convert from scientific notation to proper integers, then to strings
-            def fix_geoid(geoid_str):
-                try:
-                    # Handle scientific notation (e.g., '1.0001E+11')
-                    if 'E' in str(geoid_str).upper() or 'e' in str(geoid_str):
-                        # Convert to float, then to int, then to string
-                        return str(int(float(geoid_str)))
-                    else:
-                        # Already a regular number string
-                        return str(geoid_str).replace('.0', '').strip()
-                except:
-                    return str(geoid_str).strip()
-
-            ej_data['GEOID'] = ej_data['ID'].apply(fix_geoid).str.zfill(12)
-            print(f"  ✓ Fixed scientific notation in GEOIDs")
+            ej_data['GEOID'] = ej_data['ID']
+            print(f"  ✓ Fixed scientific notation in {len(ej_data):,} GEOIDs")
 
         # Filter to Memphis states
         ej_data['state_fips'] = ej_data['GEOID'].str[:2]
+
+        # Debug: show state distribution
+        states_found = ej_data['state_fips'].isin(['47', '05', '28']).sum()
+        print(f"  ✓ Found {states_found:,} block groups in Memphis states (TN=47, AR=05, MS=28)")
+
         ej_memphis = ej_data[ej_data['state_fips'].isin(['47', '05', '28'])].copy()
 
-        print(f"  ✓ Found {len(ej_memphis):,} block groups in TN, AR, MS")
+        if len(ej_memphis) == 0:
+            print(f"  ⚠ WARNING: No block groups found for TN, AR, or MS")
+            print(f"     Top states in file: {ej_data['state_fips'].value_counts().head(3).to_dict()}")
+        else:
+            # Select key EJScreen variables
+            # Environmental indicators (P_ = percentile, national)
+            ej_cols = ['GEOID',
+                       'P_PM25', 'P_OZONE', 'P_DSLPM',  # Air quality
+                       'P_CANCER', 'P_RESP', 'P_PTRAF', 'P_LDPNT', 'P_PNPL',  # Toxic exposure
+                       'P_PRMP', 'P_PWDIS',  # Water quality
+                       'P_PTSDF', 'P_UST',  # Waste sites
+                       'P_MINORPCT', 'P_LOWINCPCT', 'P_LESSHSPCT', 'P_LINGISOPCT', 'P_UNDER5PCT', 'P_OVER64PCT',  # Demographics
+                       'P_DEMOGIDX_2', 'P_DEMOGIDX_5',  # Demographic index
+                       'P_VULEOPCT']  # Vulnerable populations
 
-        # Select key EJScreen variables
-        # Environmental indicators (P_ = percentile, national)
-        ej_cols = ['GEOID',
-                   'P_PM25', 'P_OZONE', 'P_DSLPM',  # Air quality
-                   'P_CANCER', 'P_RESP', 'P_PTRAF', 'P_LDPNT', 'P_PNPL',  # Toxic exposure
-                   'P_PRMP', 'P_PWDIS',  # Water quality
-                   'P_PTSDF', 'P_UST',  # Waste sites
-                   'P_MINORPCT', 'P_LOWINCPCT', 'P_LESSHSPCT', 'P_LINGISOPCT', 'P_UNDER5PCT', 'P_OVER64PCT',  # Demographics
-                   'P_DEMOGIDX_2', 'P_DEMOGIDX_5',  # Demographic index
-                   'P_VULEOPCT']  # Vulnerable populations
+            available_ej = [c for c in ej_cols if c in ej_memphis.columns]
+            print(f"  ✓ Extracting {len(available_ej)-1} environmental indicators")
 
-        available_ej = [c for c in ej_cols if c in ej_memphis.columns]
+            # Merge on GEOID (block group to block group)
+            final_data = final_data.merge(
+                ej_memphis[available_ej],
+                on='GEOID',
+                how='left'
+            )
 
-        # Merge on GEOID (block group to block group)
-        final_data = final_data.merge(
-            ej_memphis[available_ej],
-            on='GEOID',
-            how='left'
-        )
+            # Rename to more readable names
+            rename_map = {
+                'P_PM25': 'EJ_PM25_Pctl',
+                'P_OZONE': 'EJ_Ozone_Pctl',
+                'P_DSLPM': 'EJ_DieselPM_Pctl',
+                'P_CANCER': 'EJ_Cancer_Pctl',
+                'P_RESP': 'EJ_Respiratory_Pctl',
+                'P_PTRAF': 'EJ_Traffic_Pctl',
+                'P_LDPNT': 'EJ_LeadPaint_Pctl',
+                'P_PNPL': 'EJ_Superfund_Pctl',
+                'P_PRMP': 'EJ_RMP_Pctl',
+                'P_PWDIS': 'EJ_WasteWater_Pctl',
+                'P_PTSDF': 'EJ_HazWaste_Pctl',
+                'P_UST': 'EJ_UndergroundTanks_Pctl',
+                'P_MINORPCT': 'EJ_MinorityPct_Pctl',
+                'P_LOWINCPCT': 'EJ_LowIncomePct_Pctl',
+                'P_DEMOGIDX_2': 'EJ_DemoIndex2_Pctl',
+                'P_DEMOGIDX_5': 'EJ_DemoIndex5_Pctl',
+                'P_VULEOPCT': 'EJ_VulnerablePct_Pctl'
+            }
 
-        # Rename to more readable names
-        rename_map = {
-            'P_PM25': 'EJ_PM25_Pctl',
-            'P_OZONE': 'EJ_Ozone_Pctl',
-            'P_DSLPM': 'EJ_DieselPM_Pctl',
-            'P_CANCER': 'EJ_Cancer_Pctl',
-            'P_RESP': 'EJ_Respiratory_Pctl',
-            'P_PTRAF': 'EJ_Traffic_Pctl',
-            'P_LDPNT': 'EJ_LeadPaint_Pctl',
-            'P_PNPL': 'EJ_Superfund_Pctl',
-            'P_PRMP': 'EJ_RMP_Pctl',
-            'P_PWDIS': 'EJ_WasteWater_Pctl',
-            'P_PTSDF': 'EJ_HazWaste_Pctl',
-            'P_UST': 'EJ_UndergroundTanks_Pctl',
-            'P_MINORPCT': 'EJ_MinorityPct_Pctl',
-            'P_LOWINCPCT': 'EJ_LowIncomePct_Pctl',
-            'P_DEMOGIDX_2': 'EJ_DemoIndex2_Pctl',
-            'P_DEMOGIDX_5': 'EJ_DemoIndex5_Pctl',
-            'P_VULEOPCT': 'EJ_VulnerablePct_Pctl'
-        }
+            for old_col, new_col in rename_map.items():
+                if old_col in final_data.columns:
+                    final_data.rename(columns={old_col: new_col}, inplace=True)
 
-        for old_col, new_col in rename_map.items():
-            if old_col in final_data.columns:
-                final_data.rename(columns={old_col: new_col}, inplace=True)
-
-        ej_count = final_data['EJ_PM25_Pctl'].notna().sum() if 'EJ_PM25_Pctl' in final_data.columns else 0
-        print(f"  ✓ EJScreen merged: {ej_count:,} / {len(final_data):,} ({ej_count/len(final_data)*100:.1f}%)")
+            ej_count = final_data['EJ_PM25_Pctl'].notna().sum() if 'EJ_PM25_Pctl' in final_data.columns else 0
+            print(f"  ✓ EJScreen merged: {ej_count:,} / {len(final_data):,} ({ej_count/len(final_data)*100:.1f}%)")
 
 # ============================================================
 # SUMMARY
